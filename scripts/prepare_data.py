@@ -35,7 +35,7 @@ def load_audio(audio_path):
     if ext == ".mp3":
         wav_path = audio_path.replace(".mp3", ".wav")
         if not os.path.exists(wav_path):  # avoid re-conversion
-            logger.info(f"Converting MP3 to WAV: {audio_path} → {wav_path}")
+            logger.info(f"Converting MP3 to WAV: {audio_path} -> {wav_path}")
             subprocess.run([
                 "ffmpeg", "-y", "-i", audio_path,
                 "-acodec", "pcm_s16le", "-ar", "16000", wav_path  # mono 16-bit PCM at 16kHz

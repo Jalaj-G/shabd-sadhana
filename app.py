@@ -77,7 +77,7 @@ def build_upload_block():
     return zip_upload, file_preview, upload_result
 
 
-def handle_finetune(epoch, batch, lr):
+def handle_finetune(epoch, batch, lr, finetune_mode):
     model_name_or_path = model_state.get("selected_model")
     audio_dir = dataset_dir["audio_dir"]
     transcript_dir = dataset_dir["transcript_dir"]
@@ -102,6 +102,7 @@ def handle_finetune(epoch, batch, lr):
                 "--epochs", str(epoch),
                 "--per_device_train_batch_size", str(batch),
                 "--learning_rate", str(lr),
+                "--finetune_mode", finetune_mode,
             ],
             check=True,
             cwd=Path(__file__).parent,        # keeps relative imports happy
@@ -124,6 +125,11 @@ def build_finetune_block():
             epochs = gr.Number(value=3, label="Epochs")
             batch_size = gr.Number(value=8, label="Batch Size")
             learning_rate = gr.Number(value=1e-5, label="Learning Rate")
+            finetune_mode = gr.Dropdown(
+                choices=["full", "lora", "qlora"],
+                value="full",
+                label="Fine-Tuning Mode"
+            )
 
         start_button = gr.Button("🚀 Start Fine-Tuning")
         # status_output = gr.Textbox(label="Training Status", interactive=False)
@@ -131,7 +137,7 @@ def build_finetune_block():
 
         start_button.click(
             fn=handle_finetune,
-            inputs=[epochs, batch_size, learning_rate],
+            inputs=[epochs, batch_size, learning_rate, finetune_mode],
             outputs=model_download
         )
 
