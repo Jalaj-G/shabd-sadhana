@@ -24,6 +24,7 @@ from peft import (
 sys.path.append(str(Path(__file__).resolve().parent.parent))  # Add project root
 from scripts.prepare_data import build_dataset
 from utils.logger import setup_logger
+from utils.metrics import compute_wer
 
 logger = setup_logger()
 
@@ -113,7 +114,7 @@ class WhisperPeftWrapper(nn.Module):
 # 📦 LOAD DATASET
 # ------------------------------
 logger.info("Loading dataset...")
-dataset = build_dataset(args.audio_dir, args.transcript_dir)
+dataset_dict = build_dataset(args.audio_dir, args.transcript_dir, test_size=0.1)
 
 # ------------------------------
 # 🧠 LOAD MODEL + PROCESSOR
@@ -144,7 +145,7 @@ if args.finetune_mode in ["lora", "qlora"]:
         lora_dropout=0.1, bias="none",
         task_type=TaskType.SEQ_2_SEQ_LM,
     )
-    model = get_peft_model(model, lora_cfg)
+    model = get_peft_model(model, lora_cfg, low_cpu_mem_usage=False)
     model.print_trainable_parameters()
 
     # 🔑 wrap only for LoRA / QLoRA
@@ -176,9 +177,37 @@ def preprocess(batch):
         "labels": labels
     }
 
+# ------------------------------
+# 📊 EVALUATION METRICS
+# ------------------------------
+def compute_metrics(pred):
+    """
+    Compute WER metric during evaluation.
+
+    Called by Trainer after each evaluation run.
+    """
+    import numpy as np
+
+    # Extract predictions and labels
+    pred_ids = pred.predictions
+    label_ids = pred.label_ids
+
+    # Replace -100 in labels (used for padding) with pad_token_id
+    label_ids = np.where(label_ids != -100, label_ids, processor.tokenizer.pad_token_id)
+
+    # Decode predictions and labels to text
+    pred_str = processor.batch_decode(pred_ids, skip_special_tokens=True)
+    label_str = processor.batch_decode(label_ids, skip_special_tokens=True)
+
+    # Compute WER
+    wer_result = compute_wer(references=label_str, predictions=pred_str)
+
+    return wer_result
+
 logger.info("Tokenizing dataset...")
-processed_dataset = dataset.map(preprocess)
-# print(processed_dataset[0])
+processed_train = dataset_dict["train"].map(preprocess)
+processed_eval = dataset_dict["eval"].map(preprocess)
+# print(processed_train[0])
 
 # ------------------------------
 # ⚙️ TRAINING SETUP
@@ -186,19 +215,25 @@ processed_dataset = dataset.map(preprocess)
 training_args = Seq2SeqTrainingArguments(
     output_dir=args.output_dir,
     per_device_train_batch_size=args.per_device_train_batch_size,
+    per_device_eval_batch_size=args.per_device_train_batch_size,
     gradient_accumulation_steps=1,
     learning_rate=args.learning_rate,
     num_train_epochs=args.epochs,
     warmup_steps=10,
-    eval_strategy="no",
+    eval_strategy="epoch",
+    save_strategy="epoch",
+    load_best_model_at_end=True,
+    metric_for_best_model="wer",
+    greater_is_better=False,
     logging_strategy="steps",
     logging_steps=1,
-    save_strategy="no",
     remove_unused_columns=False,
     label_names=["labels"],
     report_to="none",
     fp16=False,
     bf16=False,
+    predict_with_generate=True,
+    generation_max_length=225,
 )
 
 data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
@@ -208,9 +243,11 @@ data_collator = DataCollatorSpeechSeq2SeqWithPadding(processor=processor)
 trainer = Seq2SeqTrainer(
     model=model,
     args=training_args,
-    train_dataset=processed_dataset,
+    train_dataset=processed_train,
+    eval_dataset=processed_eval,
     data_collator=data_collator,
-    # tokenizer=processor.tokenizer if hasattr(processor, "tokenizer") else None,
+    compute_metrics=compute_metrics,
+    tokenizer=processor.feature_extractor,
 )
 
 # ------------------------------
@@ -223,6 +260,16 @@ trainer.train()
 # ------------------------------
 # 💾 SAVE MODEL
 # ------------------------------
+# Load best checkpoint (has lowest WER)
+best_checkpoint_path = trainer.state.best_model_checkpoint
+if best_checkpoint_path:
+    logger.info(f"Best checkpoint found at: {best_checkpoint_path}")
+    if args.finetune_mode in ["lora", "qlora"]:
+        logger.info(f"Loading best checkpoint for PEFT model...")
+        from peft import PeftModel
+        base_model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path)
+        model.model = PeftModel.from_pretrained(base_model, best_checkpoint_path)
+
 if args.finetune_mode in ["lora", "qlora"]:
     model.model = model.model.merge_and_unload()  # merge LoRA into base weights
 
