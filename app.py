@@ -5,6 +5,8 @@ from utils.helpers import get_audio_transcript_pairs, extract_zip
 import time, subprocess
 from pathlib import Path
 from utils.logger import setup_logger
+from scripts.infer import transcribe_audio
+
 logger = setup_logger()
 
 
@@ -143,6 +145,28 @@ def build_finetune_block():
 
     return epochs, batch_size, learning_rate, start_button, model_download
 
+def handle_single_inference(audio_file):
+    model_path = model_state.get("selected_model")
+    if not model_path or not audio_file:
+        return "Missing model or audio."
+
+    transcript = transcribe_audio(audio_file, model_path)
+    return transcript
+
+def build_inference_block():
+    with gr.Group():
+        gr.Markdown("### 🔍 Inference")
+        audio_input = gr.Audio(label="Upload Audio for Transcription", type="filepath")
+        transcript_output = gr.Textbox(label="Transcription", lines=5)
+        infer_btn = gr.Button("🧠 Transcribe")
+
+        infer_btn.click(
+            fn=handle_single_inference,
+            inputs=audio_input,
+            outputs=transcript_output
+        )
+
+    return audio_input, transcript_output
 
 
 # Assemble full UI
@@ -153,6 +177,7 @@ def launch_ui():
         build_model_selector_block()
         build_upload_block()
         build_finetune_block()
+        build_inference_block()
 
     demo.launch()
 
