@@ -29,6 +29,7 @@ httpx==0.28.1
 huggingface-hub==0.32.2
 idna==3.10
 Jinja2==3.1.6
+jiwer==3.0.3
 llvmlite==0.44.0
 markdown-it-py==3.0.0
 MarkupSafe==3.0.2

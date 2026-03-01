@@ -5,6 +5,8 @@ from utils.helpers import get_audio_transcript_pairs, extract_zip
 import time, subprocess
 from pathlib import Path
 from utils.logger import setup_logger
+from scripts.infer import transcribe_audio
+
 logger = setup_logger()
 
 
@@ -77,7 +79,7 @@ def build_upload_block():
     return zip_upload, file_preview, upload_result
 
 
-def handle_finetune(epoch, batch, lr):
+def handle_finetune(epoch, batch, lr, finetune_mode):
     model_name_or_path = model_state.get("selected_model")
     audio_dir = dataset_dir["audio_dir"]
     transcript_dir = dataset_dir["transcript_dir"]
@@ -102,6 +104,7 @@ def handle_finetune(epoch, batch, lr):
                 "--epochs", str(epoch),
                 "--per_device_train_batch_size", str(batch),
                 "--learning_rate", str(lr),
+                "--finetune_mode", finetune_mode,
             ],
             check=True,
             cwd=Path(__file__).parent,        # keeps relative imports happy
@@ -124,6 +127,11 @@ def build_finetune_block():
             epochs = gr.Number(value=3, label="Epochs")
             batch_size = gr.Number(value=8, label="Batch Size")
             learning_rate = gr.Number(value=1e-5, label="Learning Rate")
+            finetune_mode = gr.Dropdown(
+                choices=["full", "lora", "qlora"],
+                value="full",
+                label="Fine-Tuning Mode"
+            )
 
         start_button = gr.Button("🚀 Start Fine-Tuning")
         # status_output = gr.Textbox(label="Training Status", interactive=False)
@@ -131,12 +139,34 @@ def build_finetune_block():
 
         start_button.click(
             fn=handle_finetune,
-            inputs=[epochs, batch_size, learning_rate],
+            inputs=[epochs, batch_size, learning_rate, finetune_mode],
             outputs=model_download
         )
 
     return epochs, batch_size, learning_rate, start_button, model_download
 
+def handle_single_inference(audio_file):
+    model_path = model_state.get("selected_model")
+    if not model_path or not audio_file:
+        return "Missing model or audio."
+
+    transcript = transcribe_audio(audio_file, model_path)
+    return transcript
+
+def build_inference_block():
+    with gr.Group():
+        gr.Markdown("### 🔍 Inference")
+        audio_input = gr.Audio(label="Upload Audio for Transcription", type="filepath")
+        transcript_output = gr.Textbox(label="Transcription", lines=5)
+        infer_btn = gr.Button("🧠 Transcribe")
+
+        infer_btn.click(
+            fn=handle_single_inference,
+            inputs=audio_input,
+            outputs=transcript_output
+        )
+
+    return audio_input, transcript_output
 
 
 # Assemble full UI
@@ -147,6 +177,7 @@ def launch_ui():
         build_model_selector_block()
         build_upload_block()
         build_finetune_block()
+        build_inference_block()
 
     demo.launch()
 

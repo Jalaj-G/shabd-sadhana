@@ -35,7 +35,7 @@ def load_audio(audio_path):
     if ext == ".mp3":
         wav_path = audio_path.replace(".mp3", ".wav")
         if not os.path.exists(wav_path):  # avoid re-conversion
-            logger.info(f"Converting MP3 to WAV: {audio_path} → {wav_path}")
+            logger.info(f"Converting MP3 to WAV: {audio_path} -> {wav_path}")
             subprocess.run([
                 "ffmpeg", "-y", "-i", audio_path,
                 "-acodec", "pcm_s16le", "-ar", "16000", wav_path  # mono 16-bit PCM at 16kHz
@@ -49,7 +49,19 @@ def load_audio(audio_path):
     waveform, sample_rate = torchaudio.load(audio_path)
     return waveform[0].numpy(), sample_rate
 
-def build_dataset(audio_dir, transcript_dir):
+def build_dataset(audio_dir, transcript_dir, test_size=0.1, seed=42):
+    """
+    Build train/eval dataset split from audio and transcript files.
+
+    Args:
+        audio_dir: Directory containing audio files (.wav, .mp3)
+        transcript_dir: Directory containing SRT transcript files
+        test_size: Fraction of data for evaluation (default 0.1 = 10%)
+        seed: Random seed for reproducible splits (default 42)
+
+    Returns:
+        DatasetDict with "train" and "eval" splits
+    """
     data = []
 
     for fname in os.listdir(audio_dir):
@@ -87,5 +99,25 @@ def build_dataset(audio_dir, transcript_dir):
                 },
                 "text": seg["text"]
             })
-    # This produces a datasets.Dataset object, which we can pass directly to HuggingFace Trainer.
-    return Dataset.from_list(data)
+
+    # Create dataset from list
+    dataset = Dataset.from_list(data)
+    logger.info(f"Created dataset with {len(dataset)} samples")
+
+    # Split into train and eval sets
+    dataset_dict = dataset.train_test_split(test_size=test_size, seed=seed)
+
+    # Log split sizes
+    train_size = len(dataset_dict["train"])
+    eval_size = len(dataset_dict["eval"])
+    logger.info(f"Dataset split: {train_size} train samples, {eval_size} eval samples")
+
+    # Warn if eval set is very small
+    if eval_size < 3:
+        logger.warning(
+            f"Evaluation set has only {eval_size} samples. "
+            "WER metrics may be unreliable with such a small eval set."
+        )
+
+    # This produces a DatasetDict with "train" and "eval" keys
+    return dataset_dict
